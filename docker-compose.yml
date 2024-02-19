@@ -1,0 +1,128 @@
+version: '3'
+services:
+  telegram_bot:
+    build:
+      context: Telegram_bot
+      dockerfile: Dockerfile
+    environment:
+      - ADMIN_CHAT_ID=$ADMIN_CHAT_ID
+      - BOT_TOKEN=$BOT_TOKEN
+      - SAFEGUARD_PHRASE=$SAFEGUARD_PHRASE
+    depends_on:
+      - rabbitmq
+    networks:
+      - net_gpt
+
+  chatgpt:
+    build:
+      context: ChatGPT
+      dockerfile: Dockerfile
+    deploy:
+      replicas: 2
+    environment:
+      - OPENAI_TOKEN=$OPENAI_TOKEN
+    depends_on:
+      - wireguard
+      - rabbitmq
+    network_mode: service:wireguard
+#    networks:
+#      - net_gpt
+
+  yandexgpt:
+    build:
+      context: YandexGPT
+      dockerfile: Dockerfile
+    deploy:
+      replicas: 2
+    depends_on:
+      - rabbitmq
+    environment:
+      - YANDEX_API_KEY=$YANDEX_API_KEY
+      - YANDEX_DIR_ID=$YANDEX_DIR_ID
+    networks:
+      - net_gpt
+
+  rabbitmq:
+    container_name: rabbitmq
+    image: rabbitmq:3-management
+    ports:
+      - 5672:5672
+      - 15672:15672
+    networks:
+      net_gpt:
+        ipv4_address: 172.24.60.254
+
+  wireguard:
+    container_name: wireguard
+    build:
+      context: WireGuard
+      dockerfile: Dockerfile
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    sysctls:
+      net.ipv4.conf.all.src_valid_mark: 1
+    volumes:
+      - ./WireGuard/config.conf:/etc/wireguard/wg0.conf
+    restart: unless-stopped
+#    networks:
+#      - net_gpt
+
+  prometheus:
+    container_name: prometheus
+    image: prom/prometheus
+    ports:
+      - 9090:9090
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+    networks:
+      - net_gpt
+
+  cadvisor:
+    container_name: cadvisor
+    image: gcr.io/cadvisor/cadvisor-arm64:v0.47.2
+    ports:
+      - 8080:8080
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+    networks:
+      - net_gpt
+
+  grafana:
+    container_name: grafana
+    image: grafana/grafana
+    ports:
+      - 3000:3000
+    volumes:
+      - ./monitoring/grafana:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=$GF_SECURITY_ADMIN_USER
+      - GF_SECURITY_ADMIN_PASSWORD=$GF_SECURITY_ADMIN_PASSWORD
+    networks:
+      - net_gpt
+
+  alertmanager:
+    container_name: alertmanager
+    image: prom/alertmanager
+    ports:
+      - 9093:9093
+    volumes:
+      - ./monitoring/alertmanager:/etc/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/config.yml'
+    networks:
+      - net_gpt
+
+networks:
+  net_gpt:
+    driver: bridge
+    enable_ipv6: false
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.24.0.0/16
